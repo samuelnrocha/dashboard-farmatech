@@ -12,6 +12,7 @@ from src.plantio import calcular_insumo_cana, calcular_ruas_laranja, calcular_co
 from src.r_executor import executar_analise_r
 from src.smpc_service import SMPCService, classificar_perda, obter_produtividade_esperada, calcular_perda
 from src.iot_service import IOTService
+from src.services.aws_sns_service import AWSService
 
 # Configuração da página do Streamlit
 st.set_page_config(
@@ -33,6 +34,13 @@ if 'smpc_service' not in st.session_state:
 # Inicialização do serviço IoT (Fase 3)
 if 'iot_service' not in st.session_state:
     st.session_state.iot_service = IOTService()
+
+# Inicialização do serviço AWS Alerts (Fase 5)
+if 'aws_service' not in st.session_state:
+    st.session_state.aws_service = AWSService()
+
+if 'ultimo_alerta_umidade_enviado' not in st.session_state:
+    st.session_state.ultimo_alerta_umidade_enviado = False
 
 
 # Estilização CSS Customizada para Estética Premium (Tons de Verde, Dark Mode & Glassmorphism)
@@ -942,6 +950,44 @@ elif page == "Monitoramento IoT (Fase 3)":
         # Exibição de alertas dinâmicos
         if latest["umidade"] < 30.0:
             st.warning(f"⚠️ **Alerta de Emergência**: Umidade crítica detectada abaixo do limite de segurança (Solo em {latest['umidade']}%). Bomba acionada automaticamente!")
+            
+            # Disparar alerta via AWS SNS/SES apenas uma vez (anti-bounce)
+            if not st.session_state.ultimo_alerta_umidade_enviado:
+                mensagem_alert = f"ALERTA CRÍTICO: Umidade do solo na fazenda atingiu {latest['umidade']}% (abaixo de 30%). Bomba de irrigação acionada automaticamente."
+                
+                # 1. Enviar SMS via SNS
+                st.session_state.aws_service.enviar_sms(mensagem_alert)
+                
+                # 2. Enviar E-mail via SES
+                corpo_email = f"""
+                <html>
+                <body style='font-family: Arial, sans-serif; background-color: #f4f4f4; padding: 20px;'>
+                    <div style='background-color: #ffffff; padding: 20px; border-radius: 8px; border: 1px solid #ff6b6b; box-shadow: 0 4px 12px rgba(0,0,0,0.15);'>
+                        <h2 style='color: #ff6b6b; margin-top: 0;'>⚠️ Alerta Crítico - FarmTech Solutions</h2>
+                        <p>Prezado Operador,</p>
+                        <p>O sistema de monitoramento IoT detectou uma condição crítica de umidade na lavoura:</p>
+                        <ul style='background-color: #fcf8f2; padding: 15px 30px; border-radius: 6px; border-left: 4px solid #f0ad4e; list-style-type: none;'>
+                            <li><b>📊 Umidade do Solo:</b> {latest['umidade']}% (Crítico: < 30.0%)</li>
+                            <li><b>🌡️ Temperatura Ambiente:</b> {latest['temperatura']}°C</li>
+                            <li><b>⏰ Timestamp:</b> {latest['timestamp']}</li>
+                        </ul>
+                        <p><b>Ação automática:</b> A bomba de irrigação foi ativada emergencialmente.</p>
+                        <hr style='border: none; border-top: 1px solid #eeeeee; margin: 20px 0;'>
+                        <p style='font-size: 0.8rem; color: #888888;'>Este é um alerta automático gerado pelo ecossistema AWS/IoT FarmTech Solutions (Mock Local).</p>
+                    </div>
+                </body>
+                </html>
+                """
+                st.session_state.aws_service.enviar_email(
+                    assunto="[CRÍTICO] Alerta de Baixa Umidade do Solo - FarmTech Solutions",
+                    mensagem_html=corpo_email
+                )
+                
+                st.session_state.ultimo_alerta_umidade_enviado = True
+        else:
+            # Resetar estado quando a umidade voltar ao normal (>= 30.0%)
+            st.session_state.ultimo_alerta_umidade_enviado = False
+
         if latest["temperatura"] > 38.0:
             st.error(f"🔥 **Alerta Térmico**: Temperatura ambiente severa ({latest['temperatura']}°C). Risco de queima de folhas e perda de rendimento.")
             
@@ -1143,15 +1189,88 @@ elif page == "Alertas de Cloud/AWS (Fase 5)":
     st.markdown("<h1 class='main-title'>Fase 5: Alertas de Cloud & AWS</h1>", unsafe_allow_html=True)
     st.markdown("<p class='subtitle'>Simulação de Notificações Críticas de Irrigação e Anomalias via AWS SNS/SES</p>", unsafe_allow_html=True)
     
+    # Obter o serviço AWS
+    aws = st.session_state.aws_service
+    
     st.markdown("""
     <div class='glass-card'>
-        <h4>☁️ Centro de Controle de Mensageria e Nuvem</h4>
-        <p>Canal integrado para visualização de alertas automáticos. Se os sensores de solo detectarem seca ou 
-        a inteligência artificial identificar doenças, alertas urgentes são disparados via AWS.</p>
+        <h4 style='margin-top:0;'>☁️ Centro de Controle de Mensageria e Nuvem (Conformidade ISO 27001/27002)</h4>
+        <p style='font-size:0.95rem; color:#a3c4b2; margin-top:5px; margin-bottom:0;'>
+        Em conformidade com a ISO 27001 (Segurança da Informação) e ISO 27002 (Controle de Acesso), todas as credenciais AWS do projeto são isoladas e protegidas via variáveis de ambiente. 
+        Para fins de teste e integridade de desenvolvimento local, o dashboard utiliza a biblioteca de emulação <b>Moto Mock</b>, 
+        que simula de forma isolada os serviços reais de mensageria da AWS sem expor chaves públicas nem necessitar de rede externa.
+        </p>
     </div>
     """, unsafe_allow_html=True)
     
-    st.info("ℹ️ Os simuladores locais da AWS SNS/SES utilizando biblioteca Moto e logs de MessageId correspondentes estarão ativos em breve.")
+    col_envio, col_status = st.columns([2, 1])
+    
+    with col_envio:
+        st.subheader("✉️ Testador de Notificações Manuais")
+        
+        tab_sms, tab_email = st.tabs(["📱 Enviar SMS (AWS SNS)", "📧 Enviar E-mail (AWS SES)"])
+        
+        with tab_sms:
+            col_t1, col_t2 = st.columns(2)
+            with col_t1:
+                sms_tel = st.text_input("Número do Destinatário", "+5511999998888")
+            with col_t2:
+                sms_sender = st.text_input("Sender ID", "FarmTech", disabled=True)
+            sms_msg = st.text_area("Mensagem do SMS", "Alerta manual enviado pelo operador. Sistema de teste AWS SNS.")
+            
+            if st.button("Enviar Alerta SMS"):
+                success, details = aws.enviar_sms(sms_msg, sms_tel)
+                if success:
+                    st.success(f"SMS enviado via AWS SNS mockado com sucesso! MessageId: `{details}`")
+                else:
+                    st.error(f"Erro ao disparar SMS: {details}")
+                    
+        with tab_email:
+            col_e1, col_e2 = st.columns(2)
+            with col_e1:
+                email_dest = st.text_input("E-mail do Operador", "operador@farmtech.com")
+            with col_e2:
+                email_sender = st.text_input("Remetente Autorizado", aws.sender_email, disabled=True)
+            email_subj = st.text_input("Assunto do E-mail", "[TESTE] Alerta Manual de Teste - FarmTech")
+            email_body = st.text_area("Corpo do E-mail (Markdown/HTML)", "Este é um e-mail de teste disparado de forma mockada via AWS SES local.")
+            
+            if st.button("Enviar Alerta E-mail"):
+                success, details = aws.enviar_email(email_subj, f"<p>{email_body}</p>", email_dest)
+                if success:
+                    st.success(f"E-mail enviado via AWS SES mockado com sucesso! MessageId: `{details}`")
+                else:
+                    st.error(f"Erro ao disparar E-mail: {details}")
+                    
+    with col_status:
+        st.subheader("⚙️ Status dos Serviços Cloud")
+        
+        st.markdown(f"""
+        <div style='background-color: rgba(11, 21, 16, 0.65); padding: 20px; border-radius: 12px; border: 1px solid rgba(80, 200, 120, 0.15);'>
+            <h5 style='color: #50c878; margin-top:0;'>AWS Cloud Emulation Status</h5>
+            <div style='font-size:0.9rem; margin-bottom:8px;'><b>Ambiente:</b> <code>Moto Mock Sandbox</code></div>
+            <div style='font-size:0.9rem; margin-bottom:8px;'><b>AWS Region:</b> <code>{aws.region}</code></div>
+            <div style='font-size:0.9rem; margin-bottom:8px;'><b>SNS Topic:</b> <span style='font-size:0.75rem; word-break:break-all;'><code>{aws.topic_arn}</code></span></div>
+            <div style='font-size:0.9rem; margin-bottom:8px;'><b>SES Sender:</b> <code>{aws.sender_email}</code></div>
+            <div style='font-size:0.9rem;'><b>SES Recipient:</b> <code>{aws.recipient_email}</code></div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    st.markdown("---")
+    
+    st.subheader("📋 Histórico de Alertas Disparados (Cloud Logs)")
+    
+    logs = aws.get_logs()
+    
+    if len(logs) > 0:
+        df_logs = pd.DataFrame(logs)
+        st.dataframe(df_logs.iloc[::-1], use_container_width=True)
+        
+        if st.button("Limpar Histórico de Alertas"):
+            aws.clear_logs()
+            st.success("Histórico limpo com sucesso!")
+            st.rerun()
+    else:
+        st.info("Nenhum alerta crítico ou notificação manual foi enviada ainda nesta sessão.")
 
 # 7. PÁGINA FASE 6 - VISÃO COMPUTACIONAL (YOLO)
 elif page == "Visão Computacional (Fase 6)":

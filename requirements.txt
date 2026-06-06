@@ -8,3 +8,5 @@ oracledb
 python-dotenv
 sqlalchemy
 paho-mqtt
+boto3
+moto
