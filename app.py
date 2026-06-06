@@ -8,6 +8,7 @@ import os
 from config.database import fetch_data
 from src.data_generator import generate_synthetic_data
 from src.clima_api import obter_clima
+from src.plantio import calcular_insumo_cana, calcular_ruas_laranja, calcular_comprimento_ruas_laranja, calcular_herbicida_laranja
 
 # Configuração da página do Streamlit
 st.set_page_config(
@@ -15,6 +16,12 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Inicialização de variáveis de sessão para persistência de registros (Fase 1 - Plantio)
+if 'parcelas_cana' not in st.session_state:
+    st.session_state.parcelas_cana = []
+if 'parcelas_laranja' not in st.session_state:
+    st.session_state.parcelas_laranja = []
 
 # Estilização CSS Customizada para Estética Premium (Tons de Verde, Dark Mode & Glassmorphism)
 st.markdown("""
@@ -339,10 +346,195 @@ elif page == "Clima e Plantio (Fase 1)":
         st.markdown("""
         <div class='glass-card'>
             <h4>🌱 Cálculos de Plantio e Manejo (Cana & Laranja)</h4>
-            <p>Insira dados de área, espaçamento e parâmetros recomendados na Fase 1 para planejar os insumos e a safra.</p>
+            <p>Monitore, simule e registre dados de manejo de solo e insumos da Fase 1. 
+            Você pode cadastrar até 5 parcelas/registros por cultura e gerar relatórios em CSV.</p>
         </div>
         """, unsafe_allow_html=True)
-        st.info("ℹ️ Os formulários interativos de plantio de cana e laranja serão integrados na próxima tarefa.")
+        
+        cultura_selecionada = st.radio("Selecione a cultura para manejo:", ["Cana-de-açúcar", "Laranja"], horizontal=True, key="planting_culture_selector")
+        
+        if cultura_selecionada == "Cana-de-açúcar":
+            st.markdown("### 🌾 Manejo de Cana-de-açúcar")
+            
+            # Formulário
+            col_c1, col_c2 = st.columns(2)
+            with col_c1:
+                tem_area = st.selectbox("Possui o valor da área?", ["Sim", "Não (calcular área)"], key="cana_area_known")
+                if tem_area == "Sim":
+                    unidade_cana = st.selectbox("Unidade de medida:", ["m²", "ha"], key="cana_unit")
+                    area_cana = st.number_input("Valor da área:", min_value=0.0, value=1.0, step=0.1, key="cana_area_value")
+                else:
+                    comprimento_cana = st.number_input("Comprimento (metros):", min_value=0.0, value=100.0, step=1.0, key="cana_length")
+                    largura_cana = st.number_input("Largura (metros):", min_value=0.0, value=50.0, step=1.0, key="cana_width")
+                    area_cana = comprimento_cana * largura_cana
+                    unidade_cana = "m²"
+                    st.info(f"📐 Área calculada: {area_cana:,.2f} m²")
+            
+            with col_c2:
+                # Mostrar pré-cálculo
+                NPK_dose = 500 # kg/ha
+                if unidade_cana == "m²":
+                    area_ha = area_cana / 10000
+                else:
+                    area_ha = area_cana
+                insumo_estimado = area_ha * NPK_dose
+                
+                st.markdown(f"""
+                <div class='glass-card' style='margin-top: 25px;'>
+                    <h5>Estimativa de Insumo</h5>
+                    <p style='margin: 0;'>Cultura: <b>Cana-de-açúcar</b></p>
+                    <p style='margin: 0;'>Insumo: <b>Fertilizante NPK 20-05-20</b></p>
+                    <h4 style='color: #50c878; margin-top: 10px;'>{insumo_estimado:,.2f} Kg</h4>
+                    <p style='font-size: 0.8rem; color: #a3c4b2; margin: 0;'>Baseado na dosagem padrão de 500 kg/ha.</p>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            # Botão Adicionar
+            if st.button("Adicionar Parcela de Cana", key="btn_add_cana"):
+                if len(st.session_state.parcelas_cana) >= 5:
+                    st.error("❌ Limite máximo de 5 parcelas de cana atingido! Exclua alguma para adicionar outra.")
+                elif area_cana <= 0:
+                    st.error("❌ A área deve ser maior que zero.")
+                else:
+                    id_parcela = f"P{len(st.session_state.parcelas_cana) + 1}"
+                    insumo_kg, area_real_ha = calcular_insumo_cana(area_cana, unidade_cana)
+                    nova_parcela = {
+                        "ID": id_parcela,
+                        "Cultura": "Cana-de-açúcar",
+                        "Área Original": area_cana,
+                        "Unidade": unidade_cana,
+                        "Área (ha)": area_real_ha,
+                        "Insumo": "Fertilizante NPK 20-05-20",
+                        "Quantidade Insumo (Kg)": insumo_kg
+                    }
+                    st.session_state.parcelas_cana.append(nova_parcela)
+                    st.success(f"✅ Parcela {id_parcela} adicionada com sucesso!")
+            
+            # Tabela
+            if st.session_state.parcelas_cana:
+                st.markdown("#### Parcela(s) Cadastrada(s)")
+                df_cana = pd.DataFrame(st.session_state.parcelas_cana)
+                st.dataframe(df_cana, use_container_width=True)
+                
+                # Excluir
+                col_del_c1, col_del_c2 = st.columns(2)
+                with col_del_c1:
+                    parcela_para_deletar = st.selectbox("Selecione uma parcela para excluir:", [p["ID"] for p in st.session_state.parcelas_cana], key="select_del_cana")
+                    if st.button("Excluir Parcela Selecionada", key="btn_del_cana"):
+                        # remove
+                        st.session_state.parcelas_cana = [p for p in st.session_state.parcelas_cana if p["ID"] != parcela_para_deletar]
+                        # re-index IDs
+                        for idx, p in enumerate(st.session_state.parcelas_cana, start=1):
+                            p["ID"] = f"P{idx}"
+                        st.rerun()
+                
+                with col_del_c2:
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    if st.button("Exportar Dados para CSV", key="btn_export_cana"):
+                        # Exporta
+                        filepath = "dados_cana.csv"
+                        df_cana.to_csv(filepath, index=False)
+                        st.success(f"💾 Arquivo `{filepath}` gerado e salvo com sucesso na raiz do projeto!")
+                        # Disponibilizar download via UI
+                        csv_data = df_cana.to_csv(index=False).encode('utf-8')
+                        st.download_button(
+                            label="⬇️ Baixar dados_cana.csv",
+                            data=csv_data,
+                            file_name="dados_cana.csv",
+                            mime="text/csv",
+                            key="download_btn_cana"
+                        )
+            else:
+                st.info("Nenhuma parcela de cana cadastrada no momento.")
+                
+        elif cultura_selecionada == "Laranja":
+            st.markdown("### 🍊 Manejo de Laranja")
+            
+            col_l1, col_l2 = st.columns(2)
+            with col_l1:
+                largura_terreno = st.number_input("Largura do terreno (m):", min_value=0.0, value=100.0, step=1.0, key="laranja_width")
+                comprimento_lavoura = st.number_input("Comprimento do terreno (m):", min_value=0.0, value=200.0, step=1.0, key="laranja_length")
+                espacamento_linhas = st.number_input("Espaçamento entre linhas (m):", min_value=0.1, value=6.0, step=0.1, key="laranja_spacing")
+                dose_herbicida = st.number_input("Dose de herbicida (L/ha):", min_value=0.0, value=4.0, step=0.1, key="laranja_dose")
+                
+            with col_l2:
+                # Mostrar pré-cálculo
+                ruas = calcular_ruas_laranja(largura_terreno, espacamento_linhas)
+                comprimento_total_ruas = calcular_comprimento_ruas_laranja(ruas, comprimento_lavoura)
+                area_m2 = largura_terreno * comprimento_lavoura
+                area_ha = area_m2 / 10000
+                herbicida_litros = calcular_herbicida_laranja(largura_terreno, comprimento_lavoura, dose_herbicida)
+                
+                st.markdown(f"""
+                <div class='glass-card'>
+                    <h5>Simulação de Resultados</h5>
+                    <p style='margin: 0;'>Total de Ruas: <b>{ruas}</b></p>
+                    <p style='margin: 0;'>Comprimento das Ruas: <b>{comprimento_total_ruas:,.2f} m</b></p>
+                    <p style='margin: 0;'>Área total: <b>{area_m2:,.2f} m² ({area_ha:,.2f} ha)</b></p>
+                    <h4 style='color: #50c878; margin-top: 10px;'>{herbicida_litros:,.2f} Litros</h4>
+                    <p style='font-size: 0.8rem; color: #a3c4b2; margin: 0;'>Dose de herbicida recomendada.</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+            # Botão Adicionar
+            if st.button("Adicionar Registro de Laranja", key="btn_add_laranja"):
+                if len(st.session_state.parcelas_laranja) >= 5:
+                    st.error("❌ Limite máximo de 5 registros de laranja atingido! Exclua algum para adicionar outro.")
+                elif largura_terreno <= 0 or comprimento_lavoura <= 0 or espacamento_linhas <= 0 or dose_herbicida <= 0:
+                    st.error("❌ Todos os valores devem ser maiores que zero.")
+                else:
+                    id_registro = len(st.session_state.parcelas_laranja) + 1
+                    novo_registro = {
+                        "Registro": id_registro,
+                        "Largura Terreno (m)": largura_terreno,
+                        "Comprimento Lavoura (m)": comprimento_lavoura,
+                        "Espaçamento (m)": espacamento_linhas,
+                        "Dose Herbicida (L/ha)": dose_herbicida,
+                        "Total Ruas": ruas,
+                        "Comprimento Total Ruas (m)": comprimento_total_ruas,
+                        "Área (m²)": area_m2,
+                        "Área (ha)": area_ha,
+                        "Herbicida Requerido (L)": herbicida_litros
+                    }
+                    st.session_state.parcelas_laranja.append(novo_registro)
+                    st.success(f"✅ Registro {id_registro} adicionado com sucesso!")
+                    
+            # Tabela
+            if st.session_state.parcelas_laranja:
+                st.markdown("#### Registro(s) Cadastrado(s)")
+                df_laranja = pd.DataFrame(st.session_state.parcelas_laranja)
+                st.dataframe(df_laranja, use_container_width=True)
+                
+                # Excluir
+                col_del_l1, col_del_l2 = st.columns(2)
+                with col_del_l1:
+                    reg_para_deletar = st.selectbox("Selecione um registro para excluir:", [r["Registro"] for r in st.session_state.parcelas_laranja], key="select_del_laranja")
+                    if st.button("Excluir Registro Selecionado", key="btn_del_laranja"):
+                        # remove
+                        st.session_state.parcelas_laranja = [r for r in st.session_state.parcelas_laranja if r["Registro"] != reg_para_deletar]
+                        # re-index
+                        for idx, r in enumerate(st.session_state.parcelas_laranja, start=1):
+                            r["Registro"] = idx
+                        st.rerun()
+                        
+                with col_del_l2:
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    if st.button("Exportar Dados para CSV", key="btn_export_laranja"):
+                        # Exporta
+                        filepath = "dados_laranja.csv"
+                        df_laranja.to_csv(filepath, index=False)
+                        st.success(f"💾 Arquivo `{filepath}` gerado e salvo com sucesso na raiz do projeto!")
+                        # download via UI
+                        csv_data = df_laranja.to_csv(index=False).encode('utf-8')
+                        st.download_button(
+                            label="⬇️ Baixar dados_laranja.csv",
+                            data=csv_data,
+                            file_name="dados_laranja.csv",
+                            mime="text/csv",
+                            key="download_btn_laranja"
+                        )
+            else:
+                st.info("Nenhum registro de laranja cadastrado no momento.")
         
     with tab_r:
         st.markdown("""
