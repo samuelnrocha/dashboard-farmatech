@@ -7,6 +7,7 @@ import seaborn as sns
 import os
 from config.database import fetch_data
 from src.data_generator import generate_synthetic_data
+from src.clima_api import obter_clima
 
 # Configuração da página do Streamlit
 st.set_page_config(
@@ -279,15 +280,78 @@ elif page == "Clima e Plantio (Fase 1)":
     st.markdown("<h1 class='main-title'>Fase 1: Clima e Manejo de Plantio</h1>", unsafe_allow_html=True)
     st.markdown("<p class='subtitle'>Integração Open-Meteo, Cálculos de Manejo de Cana/Laranja e Análise Estatística em R</p>", unsafe_allow_html=True)
     
-    st.markdown("""
-    <div class='glass-card'>
-        <h4>🌦️ Monitoramento Climático & Manejo Agrícola</h4>
-        <p>Esta seção consolida as ferramentas desenvolvidas na Fase 1. A consulta meteorológica ajudará a guiar os cálculos 
-        de manejo para as plantações e a análise R fornecerá estatísticas fundamentais para planejar as colheitas.</p>
-    </div>
-    """, unsafe_allow_html=True)
+    tab_weather, tab_planting, tab_r = st.tabs(["🌦️ Consulta Meteorológica", "🌱 Manejo de Insumos & Plantio", "📊 Análise Estatística R"])
     
-    st.info("ℹ️ As ferramentas interativas de clima, formulários de plantio e subprocesso em R serão disponibilizados nas próximas tarefas.")
+    with tab_weather:
+        st.markdown("""
+        <div class='glass-card'>
+            <h4>🌦️ Consulta Meteorológica (API Open-Meteo)</h4>
+            <p>Monitore o clima em tempo real para planejar as atividades de campo e manejo de insumos. 
+            Abaixo, digite o nome de uma cidade para consultar as informações climáticas reais.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        cidade = st.text_input("Digite o nome da cidade", placeholder="Ex: Ribeirão Preto, SP", key="weather_city_input")
+        if st.button("Consultar Clima", key="btn_weather_query"):
+            if cidade:
+                with st.spinner("Consultando dados de latitude, longitude e meteorologia..."):
+                    dados_clima = obter_clima(cidade)
+                
+                if dados_clima:
+                    st.markdown(f"### 📍 Condições em {dados_clima['cidade'].title()}")
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.markdown(f"""
+                        <div class='glass-card' style='text-align: center;'>
+                            <h2 style='font-size: 3rem; margin: 0;'>{dados_clima['emoji']}</h2>
+                            <p style='font-size: 1.1rem; color: #a3c4b2; margin: 5px 0 0 0;'>Condição</p>
+                            <h4 style='color: #50c878; margin: 5px 0 0 0;'>{dados_clima['condicao']}</h4>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    with col2:
+                        st.markdown(f"""
+                        <div class='glass-card' style='text-align: center;'>
+                            <h2 style='font-size: 3rem; margin: 0;'>🌡️</h2>
+                            <p style='font-size: 1.1rem; color: #a3c4b2; margin: 5px 0 0 0;'>Temperatura</p>
+                            <h4 style='color: #50c878; margin: 5px 0 0 0;'>{dados_clima['temperatura']} °C</h4>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    with col3:
+                        st.markdown(f"""
+                        <div class='glass-card' style='text-align: center;'>
+                            <h2 style='font-size: 3rem; margin: 0;'>💨</h2>
+                            <p style='font-size: 1.1rem; color: #a3c4b2; margin: 5px 0 0 0;'>Velocidade do Vento</p>
+                            <h4 style='color: #50c878; margin: 5px 0 0 0;'>{dados_clima['vento']} km/h</h4>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    st.markdown(f"""
+                    <div style='font-size: 0.85rem; color: #739682; text-align: right; margin-top: -10px;'>
+                        Coordenadas via Nominatim: Latitude {dados_clima['lat']:.4f}, Longitude {dados_clima['lon']:.4f}
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.error("❌ Cidade não encontrada ou erro na conexão com a API de Clima. Por favor, tente outro nome.")
+            else:
+                st.warning("⚠️ Insira o nome de uma cidade para prosseguir.")
+                
+    with tab_planting:
+        st.markdown("""
+        <div class='glass-card'>
+            <h4>🌱 Cálculos de Plantio e Manejo (Cana & Laranja)</h4>
+            <p>Insira dados de área, espaçamento e parâmetros recomendados na Fase 1 para planejar os insumos e a safra.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        st.info("ℹ️ Os formulários interativos de plantio de cana e laranja serão integrados na próxima tarefa.")
+        
+    with tab_r:
+        st.markdown("""
+        <div class='glass-card'>
+            <h4>📊 Análise Estatística Avançada (R Language)</h4>
+            <p>Execute scripts analíticos em R diretamente da dashboard para calcular distribuições, médias e desvios das colheitas.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        st.info("ℹ️ A integração com subprocessos e a exibição de logs estatísticos em R serão disponibilizados na TASK_04.")
 
 # 3. PÁGINA FASE 2 - CRUD
 elif page == "Banco de Dados & CRUD (Fase 2)":
