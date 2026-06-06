@@ -11,6 +11,7 @@ from src.clima_api import obter_clima
 from src.plantio import calcular_insumo_cana, calcular_ruas_laranja, calcular_comprimento_ruas_laranja, calcular_herbicida_laranja
 from src.r_executor import executar_analise_r
 from src.smpc_service import SMPCService, classificar_perda, obter_produtividade_esperada, calcular_perda
+from src.iot_service import IOTService
 
 # Configuração da página do Streamlit
 st.set_page_config(
@@ -28,6 +29,11 @@ if 'parcelas_laranja' not in st.session_state:
 # Inicialização do serviço SMPC (Fase 2 - CRUD)
 if 'smpc_service' not in st.session_state:
     st.session_state.smpc_service = SMPCService()
+
+# Inicialização do serviço IoT (Fase 3)
+if 'iot_service' not in st.session_state:
+    st.session_state.iot_service = IOTService()
+
 
 # Estilização CSS Customizada para Estética Premium (Tons de Verde, Dark Mode & Glassmorphism)
 st.markdown("""
@@ -810,19 +816,183 @@ elif page == "Banco de Dados & CRUD (Fase 2)":
                         st.error(msg)
 
 # 4. PÁGINA FASE 3 - IOT
+# 4. PÁGINA FASE 3 - IOT
 elif page == "Monitoramento IoT (Fase 3)":
     st.markdown("<h1 class='main-title'>Fase 3: Monitoramento IoT</h1>", unsafe_allow_html=True)
     st.markdown("<p class='subtitle'>Telemetria em Tempo Real de Sensores e Controle de Irrigação</p>", unsafe_allow_html=True)
     
-    st.markdown("""
-    <div class='glass-card'>
-        <h4>🔌 Sensores de Solo e Clima local (ESP32)</h4>
-        <p>Monitore dados transmitidos via MQTT sobre umidade, temperatura e luminosidade de campo. 
-        O sistema atua automaticamente no controle da bomba d'água baseando-se em níveis críticos.</p>
-    </div>
-    """, unsafe_allow_html=True)
+    # Obter o serviço IoT de st.session_state
+    iot = st.session_state.iot_service
     
-    st.info("ℹ️ A conexão MQTT dinâmica e os cards de telemetria dos sensores IoT serão integrados em breve.")
+    # Seção superior para controle e simulação
+    col_ctrl, col_sim = st.columns([1, 2])
+    
+    with col_ctrl:
+        st.markdown("""
+        <div class='glass-card' style='height: 100%;'>
+            <h4 style='color:#50c878; margin-top: 0; margin-bottom: 12px;'>⚙️ Painel de Controle</h4>
+            <p style='font-size:0.9rem; color:#a3c4b2;'>Ajuste as configurações operacionais da lavoura e monitore a conectividade do broker MQTT.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Limiar de umidade configurável pelo operador
+        limiar = st.slider("Limiar de Umidade para Bomba (%)", 10.0, 90.0, float(iot.limiar_umidade), step=1.0)
+        iot.set_limiar_umidade(limiar)
+        
+        # Informações da conexão
+        status_broker = "🟢 Conectado ao Broker" if iot.connected else "🔴 Desconectado (Fallback Local)"
+        st.markdown(f"""
+        <div style='background-color: rgba(11, 21, 16, 0.6); padding: 12px; border-radius: 8px; border: 1px solid rgba(80, 200, 120, 0.15); margin-top: 10px;'>
+            <div style='font-size:0.85rem; margin-bottom: 4px;'><b>Broker:</b> <code>{iot.broker}</code></div>
+            <div style='font-size:0.85rem; margin-bottom: 4px;'><b>Tópico:</b> <code>{iot.topic}</code></div>
+            <div style='font-size:0.85rem;'><b>Status:</b> <span style='color:{"#50c878" if iot.connected else "#ff6b6b"}; font-weight:bold;'>{status_broker}</span></div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with col_sim:
+        st.markdown("""
+        <div class='glass-card' style='height: 100%;'>
+            <h4 style='color:#50c878; margin-top: 0; margin-bottom: 8px;'>🎮 Simulador de ESP32 (Telemetria)</h4>
+            <p style='font-size:0.9rem; color:#a3c4b2; margin-bottom: 12px;'>Simule o envio de telemetria física pelo ESP32 publicando mensagens JSON no broker MQTT.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        col_s1, col_s2, col_s3 = st.columns(3)
+        with col_s1:
+            sim_temp = st.slider("Simular Temp (°C)", 10.0, 45.0, 26.0, step=0.5)
+        with col_s2:
+            sim_umid = st.slider("Simular Umidade (%)", 10.0, 95.0, 48.0, step=1.0)
+        with col_s3:
+            sim_lumi = st.slider("Simular Luz (lux)", 50, 1200, 600, step=10)
+            
+        col_btn1, col_btn2 = st.columns(2)
+        with col_btn1:
+            if st.button("Enviar Leitura Manual", use_container_width=True):
+                pub_ok = iot.publish_data(sim_temp, sim_umid, sim_lumi)
+                if pub_ok:
+                    st.success("Leitura publicada via MQTT!")
+                else:
+                    st.info("Fallback: Atualizado localmente (broker desconectado)")
+        with col_btn2:
+            if st.button("Simular Passo Físico", use_container_width=True):
+                iot.simulate_step()
+                st.success("Passo físico executado com variação aleatória!")
+                
+    st.markdown("---")
+    
+    # Fragmento Streamlit para atualização dinâmica dos dados a cada 2 segundos
+    @st.fragment(run_every=2)
+    def render_live_telemetry():
+        latest = iot.get_latest_data()
+        historico = iot.get_history()
+        
+        # Criar os cards de telemetria
+        col1, col2, col3, col4 = st.columns(4)
+        
+        # Card Temperatura
+        with col1:
+            val_temp = latest["temperatura"]
+            color_temp = "#ff6b6b" if val_temp > 32 else ("#50c878" if val_temp >= 18 else "#4dabf7")
+            st.markdown(f"""
+            <div class='glass-card' style='text-align: center; border-left: 5px solid {color_temp}; margin-bottom: 10px;'>
+                <div style='font-size: 2.2rem;'>🌡️</div>
+                <div style='font-size: 0.85rem; text-transform: uppercase; color:#a3c4b2; margin-top:5px;'>Temperatura</div>
+                <div style='font-size: 2.0rem; font-weight: bold; color: {color_temp}; margin-top:5px;'>{val_temp} <span style='font-size:1.0rem;'>°C</span></div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        # Card Umidade
+        with col2:
+            val_umid = latest["umidade"]
+            color_umid = "#339af0" if val_umid >= iot.limiar_umidade else "#fcc419"
+            st.markdown(f"""
+            <div class='glass-card' style='text-align: center; border-left: 5px solid {color_umid}; margin-bottom: 10px;'>
+                <div style='font-size: 2.2rem;'>💧</div>
+                <div style='font-size: 0.85rem; text-transform: uppercase; color:#a3c4b2; margin-top:5px;'>Umidade do Solo</div>
+                <div style='font-size: 2.0rem; font-weight: bold; color: {color_umid}; margin-top:5px;'>{val_umid} <span style='font-size:1.0rem;'>%</span></div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        # Card Luminosidade
+        with col3:
+            val_lumi = latest["luminosidade"]
+            color_lumi = "#fab005"
+            st.markdown(f"""
+            <div class='glass-card' style='text-align: center; border-left: 5px solid {color_lumi}; margin-bottom: 10px;'>
+                <div style='font-size: 2.2rem;'>☀️</div>
+                <div style='font-size: 0.85rem; text-transform: uppercase; color:#a3c4b2; margin-top:5px;'>Luminosidade</div>
+                <div style='font-size: 2.0rem; font-weight: bold; color: {color_lumi}; margin-top:5px;'>{val_lumi} <span style='font-size:1.0rem;'>lux</span></div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        # Card Status da Bomba
+        with col4:
+            bomba_on = latest["bomba_ativa"]
+            status_bomba = "ATIVA (Irrigando)" if bomba_on else "INATIVA (Desligada)"
+            color_bomba = "#50c878" if bomba_on else "#868e96"
+            bg_bomba = "rgba(80, 200, 120, 0.12)" if bomba_on else "rgba(134, 142, 150, 0.1)"
+            st.markdown(f"""
+            <div class='glass-card' style='text-align: center; background-color: {bg_bomba}; border-left: 5px solid {color_bomba}; margin-bottom: 10px;'>
+                <div style='font-size: 2.2rem;'>⚙️</div>
+                <div style='font-size: 0.85rem; text-transform: uppercase; color:#a3c4b2; margin-top:5px;'>Bomba de Irrigação</div>
+                <div style='font-size: 1.3rem; font-weight: bold; color: {color_bomba}; margin-top:12px;'>{status_bomba}</div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        # Exibição de alertas dinâmicos
+        if latest["umidade"] < 30.0:
+            st.warning(f"⚠️ **Alerta de Emergência**: Umidade crítica detectada abaixo do limite de segurança (Solo em {latest['umidade']}%). Bomba acionada automaticamente!")
+        if latest["temperatura"] > 38.0:
+            st.error(f"🔥 **Alerta Térmico**: Temperatura ambiente severa ({latest['temperatura']}°C). Risco de queima de folhas e perda de rendimento.")
+            
+        st.markdown(f"<p style='font-size: 0.8rem; color: #a3c4b2; font-style: italic;'>Último pacote MQTT recebido: {latest['timestamp']} (Atualizando a cada 2s)</p>", unsafe_allow_html=True)
+        
+        # Histórico de leituras com gráficos interativos
+        st.subheader("📊 Histórico Recente de Telemetria")
+        
+        if len(historico) > 0:
+            df_hist = pd.DataFrame(historico)
+            
+            # Criar gráficos elegantes no tema escuro do app
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4.5), facecolor='#080f0b')
+            
+            # Customizar ax1 (Temp e Umidade)
+            ax1.set_facecolor('#0b1510')
+            indices = np.arange(len(df_hist))
+            ax1.plot(indices, df_hist['temperatura'], color='#ff6b6b', label='Temp (°C)', linewidth=2.5)
+            ax1.plot(indices, df_hist['umidade'], color='#339af0', label='Umidade (%)', linewidth=2.5)
+            ax1.axhline(iot.limiar_umidade, color='#fab005', linestyle='--', label='Limiar Umidade', alpha=0.8)
+            ax1.set_title('Temperatura & Umidade do Solo', color='#50c878', fontsize=11, fontweight='bold')
+            ax1.legend(facecolor='#080f0b', labelcolor='#e2f0e7', edgecolor='rgba(80, 200, 120, 0.2)', loc='upper left')
+            ax1.tick_params(colors='#a3c4b2', labelsize=8)
+            ax1.xaxis.label.set_color('#a3c4b2')
+            ax1.yaxis.label.set_color('#a3c4b2')
+            for spine in ax1.spines.values():
+                spine.set_color('rgba(80, 200, 120, 0.2)')
+                
+            # Customizar ax2 (Luminosidade)
+            ax2.set_facecolor('#0b1510')
+            ax2.plot(indices, df_hist['luminosidade'], color='#fab005', label='Luz (lux)', linewidth=2.5)
+            ax2.set_title('Intensidade Luminosa (lux)', color='#50c878', fontsize=11, fontweight='bold')
+            ax2.legend(facecolor='#080f0b', labelcolor='#e2f0e7', edgecolor='rgba(80, 200, 120, 0.2)', loc='upper left')
+            ax2.tick_params(colors='#a3c4b2', labelsize=8)
+            ax2.xaxis.label.set_color('#a3c4b2')
+            ax2.yaxis.label.set_color('#a3c4b2')
+            for spine in ax2.spines.values():
+                spine.set_color('rgba(80, 200, 120, 0.2)')
+                
+            plt.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
+            
+            with st.expander("📄 Tabela Completa de Registros Recentes (JSON/MQTT Data)"):
+                st.dataframe(df_hist.iloc[::-1], use_container_width=True)
+        else:
+            st.info("Aguardando o recebimento ou simulação dos primeiros dados do sensor para plotar gráficos.")
+            
+    # Chamar o renderizador de telemetria em tempo real
+    render_live_telemetry()
+
 
 # 5. PÁGINA FASE 4 - PREDIÇÕES DE ML (MANTENDO FUNCIONALIDADES ORIGINAIS)
 elif page == "Predições de ML (Fase 4)":

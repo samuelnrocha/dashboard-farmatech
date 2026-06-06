@@ -7,3 +7,4 @@ seaborn
 oracledb
 python-dotenv
 sqlalchemy
+paho-mqtt
