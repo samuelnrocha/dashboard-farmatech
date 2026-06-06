@@ -10,6 +10,7 @@ from src.data_generator import generate_synthetic_data
 from src.clima_api import obter_clima
 from src.plantio import calcular_insumo_cana, calcular_ruas_laranja, calcular_comprimento_ruas_laranja, calcular_herbicida_laranja
 from src.r_executor import executar_analise_r
+from src.smpc_service import SMPCService, classificar_perda, obter_produtividade_esperada, calcular_perda
 
 # Configuração da página do Streamlit
 st.set_page_config(
@@ -23,6 +24,10 @@ if 'parcelas_cana' not in st.session_state:
     st.session_state.parcelas_cana = []
 if 'parcelas_laranja' not in st.session_state:
     st.session_state.parcelas_laranja = []
+
+# Inicialização do serviço SMPC (Fase 2 - CRUD)
+if 'smpc_service' not in st.session_state:
+    st.session_state.smpc_service = SMPCService()
 
 # Estilização CSS Customizada para Estética Premium (Tons de Verde, Dark Mode & Glassmorphism)
 st.markdown("""
@@ -565,17 +570,244 @@ elif page == "Clima e Plantio (Fase 1)":
 # 3. PÁGINA FASE 2 - CRUD
 elif page == "Banco de Dados & CRUD (Fase 2)":
     st.markdown("<h1 class='main-title'>Fase 2: Banco de Dados & CRUD</h1>", unsafe_allow_html=True)
-    st.markdown("<p class='subtitle'>Gerenciamento de Propriedades, Colheitas e Relatório de Perdas</p>", unsafe_allow_html=True)
+    st.markdown("<p class='subtitle'>Sistema de Monitoramento e Planejamento de Colheitas (SMPC) - Cana-de-açúcar</p>", unsafe_allow_html=True)
     
-    st.markdown("""
-    <div class='glass-card'>
-        <h4>🗄️ Sistema de Monitoramento e Planejamento de Colheitas (SMPC)</h4>
-        <p>Painel de gerenciamento de dados de plantações, permitindo o registro de propriedades agrícolas, safras, 
-        e perdas ocorridas em campo. Conectado de forma direta ao banco de dados relacional Oracle.</p>
+    # Carregar instância do serviço
+    smpc_service = st.session_state.smpc_service
+    
+    # Mostrar status da conexão
+    status_db_text = "Online (Conectado ao Oracle DB)" if smpc_service.db_online else "Offline (Armazenamento Local Fallback)"
+    status_db_color = "#50c878" if smpc_service.db_online else "#f0ad4e"
+    st.markdown(f"""
+    <div style='text-align: right; font-size: 0.85rem; color: #a3c4b2; margin-top: -20px; margin-bottom: 20px;'>
+        Status do Banco Oracle: <span style='color: {status_db_color}; font-weight: bold;'>{status_db_text}</span>
     </div>
     """, unsafe_allow_html=True)
+
+    tab_props, tab_harvest, tab_losses, tab_backup = st.tabs([
+        "🏡 Propriedades Rurais", 
+        "🌾 Registrar Colheita", 
+        "📉 Relatório de Perdas", 
+        "💾 Backup & Restauração"
+    ])
     
-    st.info("ℹ️ Os formulários para cadastro de novas propriedades e a listagem de colheitas integrada serão disponibilizados nas próximas tarefas.")
+    # --- TAB PROPRIEDADES ---
+    with tab_props:
+        st.markdown("""
+        <div class='glass-card'>
+            <h4>🏡 Cadastro e Listagem de Propriedades</h4>
+            <p>Registre novas propriedades rurais indicando a área total, localização e classe de solo. 
+            Estes dados são associados a cada colheita para predição e análise de perdas.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Cadastro
+        with st.expander("➕ Cadastrar Nova Propriedade", expanded=False):
+            with st.form("form_cadastrar_propriedade"):
+                col_p1, col_p2 = st.columns(2)
+                with col_p1:
+                    nome_prop = st.text_input("Nome da Propriedade:", placeholder="Ex: Fazenda Boa Vista")
+                    area_prop = st.number_input("Área Total (hectares):", min_value=0.1, value=10.0, step=1.0)
+                with col_p2:
+                    local_prop = st.text_input("Localização (Cidade, Estado):", placeholder="Ex: Ribeirão Preto, SP")
+                    solo_prop = st.selectbox("Tipo de Solo principal:", [
+                        "Latossolo vermelho",
+                        "Latossolo vermelho-amarelo",
+                        "Nitossolo",
+                        "Argissolo",
+                        "Cambissolo",
+                        "Neossolo Quartzarênico",
+                        "Neossolo Litólico",
+                        "Planossolo",
+                        "Gleissolo",
+                        "Vertissolo",
+                        "Organossolo",
+                        "Outros"
+                    ])
+                
+                btn_prop = st.form_submit_button("Confirmar Cadastro")
+                if btn_prop:
+                    if not nome_prop.strip() or not local_prop.strip():
+                        st.error("❌ Preencha todos os campos obrigatórios (Nome e Localização).")
+                    else:
+                        sucesso, msg = smpc_service.cadastrar_propriedade(nome_prop.strip(), area_prop, local_prop.strip(), solo_prop)
+                        if sucesso:
+                            st.success(f"✅ {msg}")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {msg}")
+                            
+        # Listagem
+        propriedades = smpc_service.listar_propriedades()
+        if propriedades:
+            st.markdown("#### Propriedades Cadastradas")
+            prop_data = []
+            for p in propriedades:
+                prop_data.append({
+                    "ID": p.id,
+                    "Nome": p.nome,
+                    "Área Total (ha)": p.area_total,
+                    "Localização": p.localizacao,
+                    "Tipo de Solo": p.tipo_solo,
+                    "Total Colheitas": p.obter_total_colheitas(),
+                    "Qtd Colhida Acumulada (t)": p.obter_quantidade_total_colhida()
+                })
+            st.dataframe(pd.DataFrame(prop_data), use_container_width=True)
+        else:
+            st.info("Nenhuma propriedade cadastrada ainda. Use o formulário acima para registrar a primeira.")
+
+    # --- TAB REGISTRAR COLHEITA ---
+    with tab_harvest:
+        st.markdown("""
+        <div class='glass-card'>
+            <h4>🌾 Registro de Colheita de Cana-de-açúcar</h4>
+            <p>Selecione a propriedade produtora e registre as safras efetuadas, indicando a área de corte 
+            e a tonelagem obtida.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        propriedades = smpc_service.listar_propriedades()
+        if not propriedades:
+            st.warning("⚠️ Cadastre pelo menos uma propriedade primeiro na aba 'Propriedades Rurais' para poder registrar colheitas.")
+        else:
+            prop_options = {p.nome: p for p in propriedades}
+            selected_prop_name = st.selectbox("Selecione a propriedade rural:", list(prop_options.keys()))
+            prop_selecionada = prop_options[selected_prop_name]
+            
+            st.markdown(f"""
+            <div style='font-size: 0.9rem; color: #a3c4b2; margin-top: -10px; margin-bottom: 20px;'>
+                Solo da propriedade selecionada: <b>{prop_selecionada.tipo_solo}</b> (Produtividade esperada: <b>{obter_produtividade_esperada(prop_selecionada.tipo_solo)} t/ha</b>)
+            </div>
+            """, unsafe_allow_html=True)
+            
+            with st.form("form_registrar_colheita"):
+                col_h1, col_h2 = st.columns(2)
+                with col_h1:
+                    data_col = st.date_input("Data da colheita:", datetime.now())
+                    area_colhida = st.number_input("Área Colhida (hectares):", min_value=0.1, value=5.0, step=0.5)
+                with col_h2:
+                    qtd_colhida = st.number_input("Quantidade Colhida (toneladas):", min_value=0.1, value=400.0, step=10.0)
+                    tipo_colheita = st.selectbox("Método de Colheita:", ["mecanica", "manual"])
+                
+                btn_col = st.form_submit_button("Confirmar Registro de Colheita")
+                if btn_col:
+                    if area_colhida > prop_selecionada.area_total:
+                        st.warning(f"⚠️ Atenção: A área colhida ({area_colhida} ha) é maior que a área total cadastrada da propriedade ({prop_selecionada.area_total} ha).")
+                    
+                    data_str = data_col.strftime('%d/%m/%Y')
+                    sucesso, msg = smpc_service.cadastrar_colheita(
+                        prop_selecionada.id, data_str, area_colhida, qtd_colhida, 
+                        tipo_colheita, prop_selecionada.tipo_solo
+                    )
+                    if sucesso:
+                        st.success(f"✅ {msg}")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {msg}")
+
+    # --- TAB RELATORIO DE PERDAS ---
+    with tab_losses:
+        st.markdown("""
+        <div class='glass-card'>
+            <h4>📉 Relatório Analítico de Perdas Agrícolas</h4>
+            <p>Comparativo científico entre a produtividade real obtida e o rendimento potencial esperado do solo. 
+            As perdas são classificadas de Baixa a Crítica.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        propriedades = smpc_service.listar_propriedades()
+        all_colheitas_data = []
+        
+        if propriedades:
+            for p in propriedades:
+                for c in p.colheitas:
+                    real_prod = c.produtividade
+                    expected_prod = obter_produtividade_esperada(p.tipo_solo)
+                    loss_pct = c.percentual_perda
+                    if loss_pct is None:
+                        loss_pct = calcular_perda(real_prod, expected_prod)
+                    
+                    class_loss = classificar_perda(loss_pct)
+                    
+                    all_colheitas_data.append({
+                        "Propriedade": p.nome,
+                        "Data Colheita": c.data,
+                        "Solo": p.tipo_solo,
+                        "Área Cortada (ha)": c.area_colhida,
+                        "Qtd Colhida (t)": c.quantidade_colhida,
+                        "Produtividade Real (t/ha)": real_prod,
+                        "Produtividade Esperada (t/ha)": expected_prod,
+                        "Perda (%)": loss_pct,
+                        "Gravidade": class_loss
+                    })
+        
+        if all_colheitas_data:
+            df_losses = pd.DataFrame(all_colheitas_data)
+            st.dataframe(df_losses, use_container_width=True)
+            
+            # Gráficos Interativos (DoD)
+            st.subheader("Visualização Gráfica")
+            
+            col_g1, col_g2 = st.columns(2)
+            
+            with col_g1:
+                # Perda média por propriedade
+                st.markdown("##### Média de Perdas (%) por Propriedade")
+                loss_by_prop = df_losses.groupby("Propriedade")["Perda (%)"].mean().reset_index()
+                st.bar_chart(data=loss_by_prop, x="Propriedade", y="Perda (%)", color="#f0ad4e", use_container_width=True)
+                
+            with col_g2:
+                # Produtividade Real vs Esperada por Propriedade
+                st.markdown("##### Real vs Esperado (t/ha) por Propriedade")
+                prod_by_prop = df_losses.groupby("Propriedade")[["Produtividade Real (t/ha)", "Produtividade Esperada (t/ha)"]].mean().reset_index()
+                st.bar_chart(data=prod_by_prop, x="Propriedade", y=["Produtividade Real (t/ha)", "Produtividade Esperada (t/ha)"], color=["#50c878", "#5bc0de"], use_container_width=True)
+        else:
+            st.info("Nenhuma colheita cadastrada no momento para gerar relatórios e gráficos.")
+
+    # --- TAB BACKUP & RESTAURAÇÃO (DoD) ---
+    with tab_backup:
+        st.markdown("""
+        <div class='glass-card'>
+            <h4>💾 Backup e Restauração de Dados</h4>
+            <p>Exporte o banco de dados atual para um arquivo de backup em JSON ou restaure dados a partir de um backup existente.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        col_b1, col_b2 = st.columns(2)
+        
+        with col_b1:
+            st.markdown("##### Gerar Backup JSON")
+            if st.button("Gerar e Salvar Backup localmente", key="btn_save_backup_smpc"):
+                # Gerar backup em arquivo físico
+                filepath = "backup_smpc_harvest.json"
+                sucesso, msg = smpc_service.exportar_backup(filepath)
+                if sucesso:
+                    st.success(f"✅ {msg}")
+                    # Oferecer download
+                    with open(filepath, "r", encoding="utf-8") as f:
+                        json_str = f.read()
+                    st.download_button(
+                        label="⬇️ Baixar backup JSON",
+                        data=json_str,
+                        file_name="backup_smpc_harvest.json",
+                        mime="application/json",
+                        key="btn_download_backup_json"
+                    )
+                else:
+                    st.error(msg)
+                    
+        with col_b2:
+            st.markdown("##### Restaurar Backup JSON")
+            backup_file = st.file_uploader("Selecione o arquivo de backup (.json):", type=["json"], key="uploader_backup_smpc")
+            if backup_file is not None:
+                json_data_str = backup_file.getvalue().decode("utf-8")
+                if st.button("Confirmar Restauração de Backup", key="btn_confirm_restore_smpc"):
+                    sucesso, msg = smpc_service.restaurar_backup(json_data_str)
+                    if sucesso:
+                        st.success(f"✅ {msg}")
+                        st.rerun()
+                    else:
+                        st.error(msg)
 
 # 4. PÁGINA FASE 3 - IOT
 elif page == "Monitoramento IoT (Fase 3)":
