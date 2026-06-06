@@ -9,6 +9,7 @@ from config.database import fetch_data
 from src.data_generator import generate_synthetic_data
 from src.clima_api import obter_clima
 from src.plantio import calcular_insumo_cana, calcular_ruas_laranja, calcular_comprimento_ruas_laranja, calcular_herbicida_laranja
+from src.r_executor import executar_analise_r
 
 # Configuração da página do Streamlit
 st.set_page_config(
@@ -539,11 +540,27 @@ elif page == "Clima e Plantio (Fase 1)":
     with tab_r:
         st.markdown("""
         <div class='glass-card'>
-            <h4>📊 Análise Estatística Avançada (R Language)</h4>
-            <p>Execute scripts analíticos em R diretamente da dashboard para calcular distribuições, médias e desvios das colheitas.</p>
+            <h4>📊 Análise Estatística Avançada (Linguagem R)</h4>
+            <p>Execute o processamento estatístico nos CSVs de Cana e Laranja gerados. 
+            O dashboard invocará o script R via subprocesso e capturará o resultado.</p>
         </div>
         """, unsafe_allow_html=True)
-        st.info("ℹ️ A integração com subprocessos e a exibição de logs estatísticos em R serão disponibilizados na TASK_04.")
+        
+        # Botão para disparar o script R
+        if st.button("Executar Análise Estatística R", key="btn_run_r_script"):
+            with st.spinner("Invocando subprocesso do interpretador R..."):
+                output_estatistico, r_instalado, sucesso = executar_analise_r()
+                
+            if sucesso:
+                if not r_instalado:
+                    st.info("ℹ️ Nota: Executando no modo Fallback em Python devido à ausência do interpretador R no sistema host.")
+                else:
+                    st.success("✅ Script R executado com sucesso!")
+                
+                st.markdown("##### 📝 Relatório Estatístico")
+                st.code(output_estatistico, language="text")
+            else:
+                st.error(output_estatistico)
 
 # 3. PÁGINA FASE 2 - CRUD
 elif page == "Banco de Dados & CRUD (Fase 2)":
