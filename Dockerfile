@@ -17,12 +17,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy requirements list
 COPY requirements.txt .
 
-# Upgrade pip and install dependencies
-# Note: We install CPU-only PyTorch and torchvision explicitly to avoid 
-# downloading the heavy CUDA version (saving ~4GB in image size).
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
-    pip install --no-cache-dir -r requirements.txt
+# Install uv package manager inside builder stage
+# We use BuildKit cache mounts for uv downloads to speed up subsequent rebuilds.
+RUN pip install --no-cache-dir uv
+
+# Install headless OpenCV, CPU-only PyTorch, and requirements using uv
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system opencv-python-headless && \
+    uv pip install --system torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
+    uv pip install --system -r requirements.txt
 
 # =====================================================================
 # STAGE 2: Runtime
@@ -37,12 +40,10 @@ WORKDIR /app
 
 # Install runtime dependencies:
 # - r-base: required for executing R statistics scripts
-# - libgl1-mesa-glx & libglib2.0-0: required for OpenCV and YOLOv5 inferencing
 # - curl: required for container healthcheck
+# (Note: libgl1-mesa-glx and libglib2.0-0 are no longer needed because we use opencv-python-headless!)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     r-base \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
