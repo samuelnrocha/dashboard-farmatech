@@ -1,4 +1,5 @@
 import boto3
+import os
 from moto import mock_aws
 from datetime import datetime
 
@@ -9,9 +10,9 @@ class AWSService:
         # Iniciar o mock da AWS para interceptar boto3 no processo local
         self._mock.start()
         
-        self.region = "us-east-1"
-        self.sender_email = "alertas@farmtech.com"
-        self.recipient_email = "operador@farmtech.com"
+        self.region = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
+        self.sender_email = os.getenv("AWS_SES_SENDER", "alertas@farmtech.com")
+        self.recipient_email = os.getenv("AWS_SES_RECIPIENT", "operador@farmtech.com")
         self.topic_arn = None
         self.alert_logs = []
         
@@ -20,16 +21,16 @@ class AWSService:
             self.sns = boto3.client(
                 "sns",
                 region_name=self.region,
-                aws_access_key_id="mock_key",
-                aws_secret_access_key="mock_secret"
+                aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID", "mock_key"),
+                aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY", "mock_secret")
             )
             
             # Cliente SES para E-mail
             self.ses = boto3.client(
                 "ses",
                 region_name=self.region,
-                aws_access_key_id="mock_key",
-                aws_secret_access_key="mock_secret"
+                aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID", "mock_key"),
+                aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY", "mock_secret")
             )
             
             self._setup_mock_resources()
