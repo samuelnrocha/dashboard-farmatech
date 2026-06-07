@@ -10,3 +10,7 @@ sqlalchemy
 paho-mqtt
 boto3
 moto
+torch
+torchvision
+ultralytics
+tqdm

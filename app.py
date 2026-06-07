@@ -13,6 +13,7 @@ from src.r_executor import executar_analise_r
 from src.smpc_service import SMPCService, classificar_perda, obter_produtividade_esperada, calcular_perda
 from src.iot_service import IOTService
 from src.services.aws_sns_service import AWSService
+from src.services.yolo_service import YOLOService
 
 # Configuração da página do Streamlit
 st.set_page_config(
@@ -41,6 +42,10 @@ if 'aws_service' not in st.session_state:
 
 if 'ultimo_alerta_umidade_enviado' not in st.session_state:
     st.session_state.ultimo_alerta_umidade_enviado = False
+
+# Inicialização do serviço YOLO (Fase 6)
+if 'yolo_service' not in st.session_state:
+    st.session_state.yolo_service = YOLOService()
 
 
 # Estilização CSS Customizada para Estética Premium (Tons de Verde, Dark Mode & Glassmorphism)
@@ -1275,14 +1280,164 @@ elif page == "Alertas de Cloud/AWS (Fase 5)":
 # 7. PÁGINA FASE 6 - VISÃO COMPUTACIONAL (YOLO)
 elif page == "Visão Computacional (Fase 6)":
     st.markdown("<h1 class='main-title'>Fase 6: Visão Computacional (YOLO)</h1>", unsafe_allow_html=True)
-    st.markdown("<p class='subtitle'>Detecção de Pragas e Diagnóstico de Saúde Foliar em Lavouras</p>", unsafe_allow_html=True)
+    st.markdown("<p class='subtitle'>Detecção de Cultivos (Laranja & Banana) e Análise Fitossanitária</p>", unsafe_allow_html=True)
+    
+    # Instância do YOLOService
+    yolo = st.session_state.yolo_service
     
     st.markdown("""
     <div class='glass-card'>
-        <h4>👁️ Diagnóstico com Inteligência Artificial YOLOv8</h4>
-        <p>Faça upload de fotos das folhas ou plantas em campo para que nosso modelo YOLO de visão computacional 
-        processe e identifique a presença de pragas ou deficiência nutricional.</p>
+        <h4 style='margin-top:0;'>👁️ Detecção Computacional YOLOv5 (Inspecionar Lavoura)</h4>
+        <p style='font-size:0.95rem; color:#a3c4b2; margin-top:5px; margin-bottom:0;'>
+        Esta seção executa a rede neural <b>YOLOv5</b> treinada para identificar frutos de <b>banana</b> e <b>laranja</b> em campo.
+        O pipeline analisa a imagem, detecta a posição de cada fruto, desenha as caixas delimitadoras e contabiliza as ocorrências. 
+        Adicionalmente, o operador pode simular anomalias fitossanitárias (doenças/pragas) e disparar alertas via AWS.
+        </p>
     </div>
     """, unsafe_allow_html=True)
     
-    st.info("ℹ️ O uploader e o pipeline de inferência YOLO com os pesos carregados serão disponibilizados na aba de visão computacional na respectiva tarefa.")
+    # Uploader e Imagens de Exemplo
+    st.subheader("📸 Seleção de Imagem para Inferência")
+    
+    # Oferecer opção de usar imagem de teste ou upload
+    opc_imagem = st.radio("Como deseja obter a imagem?", ["Usar Imagem de Teste (Exemplo)", "Fazer Upload de Imagem Personalizada"])
+    
+    img_para_detectar = None
+    caminho_imagens_teste = "/mnt/c/Users/samue/Documents/fase-7-entrega/O-despertar-da-Rede-Neural/dataset_fase6/test/images"
+    
+    if opc_imagem == "Usar Imagem de Teste (Exemplo)":
+        if os.path.exists(caminho_imagens_teste):
+            lista_imagens = sorted([f for f in os.listdir(caminho_imagens_teste) if f.endswith(('.png', '.jpg', '.jpeg'))])
+            if lista_imagens:
+                img_selecionada = st.selectbox("Selecione uma imagem de exemplo", lista_imagens)
+                caminho_completo = os.path.join(caminho_imagens_teste, img_selecionada)
+                try:
+                    img_para_detectar = Image.open(caminho_completo)
+                except Exception as e:
+                    st.error(f"Erro ao abrir imagem: {e}")
+            else:
+                st.warning("Nenhuma imagem de teste localizada no diretório.")
+        else:
+            st.warning("Diretório de imagens de teste não encontrado localmente.")
+            
+    else:
+        uploaded_file = st.file_uploader("Selecione uma imagem (.png, .jpg, .jpeg)", type=["png", "jpg", "jpeg"])
+        if uploaded_file is not None:
+            try:
+                img_para_detectar = Image.open(uploaded_file)
+            except Exception as e:
+                st.error(f"Erro ao abrir imagem carregada: {e}")
+                
+    if img_para_detectar is not None:
+        # Seção para configuração de anomalias/pragas (para a regra de negócio da AWS da Fase 5)
+        st.markdown("---")
+        col_param, col_health = st.columns([1, 1])
+        
+        with col_param:
+            st.subheader("⚙️ Parâmetros de Detecção")
+            conf_threshold = st.slider("Limiar de Confiança (Confidence)", 0.1, 0.9, 0.25, step=0.05)
+            # Atualizar limiar no serviço se o modelo estiver carregado
+            if yolo.model:
+                yolo.model.conf = conf_threshold
+                
+        with col_health:
+            st.subheader("🧪 Diagnóstico Fitossanitário (Simulado)")
+            saude_opcao = st.selectbox(
+                "Avaliação Visual de Pragas/Doenças",
+                [
+                    "Saudável (Normal)",
+                    "Anomalia: Presença de Ácaro da Falsa-Ferrugem / Mancha Preta",
+                    "Anomalia: Infestação de Mosca-das-frutas",
+                    "Anomalia: Comprometimento Foliar Severo / Fungos"
+                ]
+            )
+            
+        st.markdown("---")
+        
+        # Botão para executar inferência
+        if st.button("Executar Inferência YOLOv5", use_container_width=True):
+            with st.spinner("Processando imagem pela rede neural..."):
+                img_rendered, detections, counts = yolo.detect(img_para_detectar)
+                
+                # Exibir colunas de imagem Original vs Processada
+                col_img1, col_img2 = st.columns(2)
+                
+                with col_img1:
+                    st.write("**Imagem Original**")
+                    st.image(img_para_detectar, use_container_width=True)
+                    
+                with col_img2:
+                    st.write("**Imagem Processada (Deteções YOLO)**")
+                    st.image(img_rendered, use_container_width=True)
+                    
+                # Exibir métricas e contagens
+                st.subheader("📊 Resultados da Análise Visual")
+                
+                col_m1, col_m2, col_m3 = st.columns(3)
+                
+                total_detected = len(detections)
+                with col_m1:
+                    st.metric("Total de Frutos Detectados", total_detected)
+                with col_m2:
+                    st.metric("Laranjas Identificadas", counts.get("laranja", 0))
+                with col_m3:
+                    st.metric("Bananas Identificadas", counts.get("banana", 0))
+                    
+                # Detalhes das detecções individuais em expansor
+                if total_detected > 0:
+                    with st.expander("🔍 Ver Detalhes Individuais das Bounding Boxes"):
+                        df_det = pd.DataFrame(detections)
+                        st.dataframe(df_det, use_container_width=True)
+                        
+                    # Se houver detecção de anomalia, disparar alerta AWS
+                    if saude_opcao != "Saudável (Normal)":
+                        st.markdown(f"""
+                        <div style='background-color: rgba(255, 107, 107, 0.1); border: 1px solid rgba(255, 107, 107, 0.3); padding: 15px; border-radius: 8px; margin-top: 15px; margin-bottom: 15px;'>
+                            <h4 style='margin:0; color:#ff6b6b;'>⚠️ Anomalia Crítica Confirmada em Campo</h4>
+                            <p style='margin-top:5px; margin-bottom:12px; font-size:0.95rem; color:#e2f0e7;'>
+                            O operador diagnosticou os frutos detectados com status comprometido (<b>{saude_opcao}</b>).
+                            O protocolo de segurança da informação ISO 27001 exige o registro de anomalias críticas no sistema de contingência de nuvem.
+                            </p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # Disparo de alerta manual/automático no botão
+                        if st.button("Disparar Notificações de Alerta AWS (SNS/SES)", use_container_width=True):
+                            mensagem_sms = f"[ALERTA FITOSSANITÁRIO] Anomalia detectada via YOLOv5: {saude_opcao}. Detectados {counts.get('laranja', 0)} laranjas e {counts.get('banana', 0)} bananas infectadas."
+                            
+                            # Disparar SMS
+                            success_sms, msg_id_sms = st.session_state.aws_service.enviar_sms(mensagem_sms)
+                            
+                            # Disparar E-mail
+                            corpo_email_yolo = f"""
+                            <html>
+                            <body style='font-family: Arial, sans-serif; background-color: #f4f4f4; padding: 20px;'>
+                                <div style='background-color: #ffffff; padding: 20px; border-radius: 8px; border: 1px solid #ff6b6b;'>
+                                    <h2 style='color: #ff6b6b; margin-top:0;'>⚠️ Alerta Fitossanitário - Visão Computacional</h2>
+                                    <p>Prezado Operador,</p>
+                                    <p>Uma anomalia grave na saúde dos cultivos foi detectada no processamento de imagem:</p>
+                                    <ul style='background-color: #fdf2f2; padding: 15px 30px; border-radius: 6px; border-left: 4px solid #ff6b6b; list-style-type: none;'>
+                                        <li><b>🚨 Diagnóstico Técnico:</b> {saude_opcao}</li>
+                                        <li><b>🍊 Laranjas Detectadas:</b> {counts.get('laranja', 0)}</li>
+                                        <li><b>🍌 Bananas Detectadas:</b> {counts.get('banana', 0)}</li>
+                                        <li><b>📈 Confiança Limiar:</b> {conf_threshold}</li>
+                                    </ul>
+                                    <p>Por favor, envie equipes de tratamento agrícola para conter a proliferação.</p>
+                                    <hr style='border: none; border-top: 1px solid #eeeeee; margin: 20px 0;'>
+                                    <p style='font-size: 0.8rem; color: #888888;'>Notificação enviada em conformidade com as diretrizes de integridade de campo via AWS SES (Mock Local).</p>
+                                </div>
+                            </body>
+                            </html>
+                            """
+                            success_email, msg_id_email = st.session_state.aws_service.enviar_email(
+                                assunto=f"[CRÍTICO] Detecção de Praga/Doença - {saude_opcao}",
+                                mensagem_html=corpo_email_yolo
+                            )
+                            
+                            if success_sms and success_email:
+                                st.success(f"Alertas de emergência enviados via AWS SNS e SES! SNS MessageId: `{msg_id_sms}` | SES MessageId: `{msg_id_email}`")
+                            else:
+                                st.warning("Algumas notificações falharam no envio. Verifique a console de logs da AWS na Fase 5.")
+                else:
+                    st.info("Nenhuma fruta (banana ou laranja) detectada na imagem para o limiar de confiança atual.")
+
