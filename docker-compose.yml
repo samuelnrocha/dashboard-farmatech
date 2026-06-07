@@ -1,0 +1,28 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: farmtech-dashboard
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    security_opt:
+      - no-new-privileges:true
+    # Limits resources to ensure stability (prevent resource exhaustion)
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    networks:
+      - farmtech-network
+
+networks:
+  farmtech-network:
+    driver: bridge

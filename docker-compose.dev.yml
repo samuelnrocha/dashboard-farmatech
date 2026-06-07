@@ -1,0 +1,25 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: farmtech-dashboard-dev
+    ports:
+      - "8501:8501"
+    # Mount the local codebase to allow Streamlit hot-reloading
+    volumes:
+      - .:/app
+      # Do not overwrite the container's installed site-packages
+      - /app/node_modules
+      - /app/.venv
+    env_file:
+      - .env
+    environment:
+      - STREAMLIT_SERVER_HEADLESS=true
+      - STREAMLIT_SERVER_RUN_ON_SAVE=true
+    networks:
+      - farmtech-network
+
+networks:
+  farmtech-network:
+    driver: bridge
